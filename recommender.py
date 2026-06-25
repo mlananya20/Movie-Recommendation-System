@@ -13,7 +13,8 @@ similarity = cosine_similarity(genre_matrix)
 
 # Recommendation function
 def recommend(movie_name):
-    matches = movies[movies["title"].str.contains(movie_name, case=False, na=False)]
+    # matches = movies[movies["title"].str.contains(movie_name, case=False, na=False)]
+    matches = movies[movies["title"].str.contains(movie_name, case=False, na=False, regex=False)]
     
     if matches.empty:
         return ["Movie not found. Try another title."]
