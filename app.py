@@ -139,7 +139,7 @@ import time
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from recommender import recommend
-from concurrent.futures import ThreadPoolExecutor
+# from concurrent.futures import ThreadPoolExecutor
 import random
 
 st.set_page_config(page_title="Movie Recommender", page_icon="🎬", layout="wide")
@@ -234,69 +234,117 @@ def get_session():
 
 
 
+# @st.cache_data
+# def fetch_movie_details(movie_id, api_key, title=""):
+#     time.sleep(random.uniform(0.1, 0.4))
+#     try:
+#         session = get_session()
+
+#         # ── Step 1: Try by movie_id ──────────────────────────────
+#         url = f"https://api.themoviedb.org/3/movie/{movie_id}"
+#         m = session.get(url, params={"api_key": api_key}, timeout=15).json()
+
+#         got_poster  = bool(m.get("poster_path"))
+#         got_details = bool(m.get("release_date") and m.get("vote_average"))
+
+#         # ── Step 2: Fallback by title search if anything is missing ─
+#         if (not got_poster or not got_details) and title:
+#             search_url = "https://api.themoviedb.org/3/search/movie"
+#             res = session.get(
+#                 search_url,
+#                 params={"api_key": api_key, "query": title},
+#                 timeout=15
+#             ).json()
+#             results = res.get("results", [])
+
+#             if results:
+#                 # Pick best match — prefer exact title match
+#                 best = None
+#                 for r in results:
+#                     if r.get("title", "").lower() == title.lower():
+#                         best = r
+#                         break
+#                 if not best:
+#                     best = results[0]  # fallback to first result
+
+#                 # Only override fields that were missing
+#                 if not got_poster and best.get("poster_path"):
+#                     m["poster_path"] = best["poster_path"]
+#                 if not got_details:
+#                     m["release_date"]  = best.get("release_date", "")
+#                     m["vote_average"]  = best.get("vote_average", 0)
+#                     m["genre_ids"]     = best.get("genre_ids", [])
+
+#         # ── Step 3: Build final result ───────────────────────────
+#         poster = (
+#             f"https://image.tmdb.org/t/p/w300{m['poster_path']}"
+#             if m.get("poster_path") else None
+#         )
+#         year   = m.get("release_date", "N/A")[:4] or "N/A"
+#         rating = round(float(m.get("vote_average") or 0), 1)
+
+#         # genres: movie detail endpoint returns list of dicts; search returns id list
+#         if "genres" in m and isinstance(m["genres"], list) and m["genres"] and isinstance(m["genres"][0], dict):
+#             genre_ids = [g["id"] for g in m["genres"]]
+#         else:
+#             genre_ids = m.get("genre_ids", [])
+
+#         genres = ", ".join([GENRE_MAP.get(gid, "") for gid in genre_ids if gid in GENRE_MAP])
+
+#         return poster, year, genres, rating
+
+#     except Exception as e:
+#         print(f"❌ Error for movie_id={movie_id}, title='{title}': {str(e)}")
+#         return None, "N/A", "N/A", "N/A"
 @st.cache_data
 def fetch_movie_details(movie_id, api_key, title=""):
     time.sleep(random.uniform(0.1, 0.4))
     try:
         session = get_session()
-
-        # ── Step 1: Try by movie_id ──────────────────────────────
+        m = {}
+        
+        # Step 1: Try by movie_id
         url = f"https://api.themoviedb.org/3/movie/{movie_id}"
-        m = session.get(url, params={"api_key": api_key}, timeout=15).json()
-
-        got_poster  = bool(m.get("poster_path"))
-        got_details = bool(m.get("release_date") and m.get("vote_average"))
-
-        # ── Step 2: Fallback by title search if anything is missing ─
-        if (not got_poster or not got_details) and title:
+        resp = session.get(url, params={"api_key": api_key}, timeout=15)
+        if resp.status_code == 200:
+            m = resp.json()
+            print(f"   poster={m.get('poster_path')}, year={m.get('release_date')}")
+        # Step 2: Always try title search if poster is missing
+        if not m.get("poster_path") and title:
+            clean_title = re.sub(r'\(\d{4}\)', '', title).strip()
             search_url = "https://api.themoviedb.org/3/search/movie"
             res = session.get(
                 search_url,
-                params={"api_key": api_key, "query": title},
+                params={"api_key": api_key, "query": clean_title},
                 timeout=15
             ).json()
             results = res.get("results", [])
-
+            print(f"🔎 Search results count={len(results)}")
             if results:
-                # Pick best match — prefer exact title match
-                best = None
-                for r in results:
-                    if r.get("title", "").lower() == title.lower():
-                        best = r
-                        break
-                if not best:
-                    best = results[0]  # fallback to first result
+                # prefer exact match, else first result
+                best = next((r for r in results if r.get("title","").lower() == clean_title.lower()), results[0])
+                # merge missing fields
+                for field in ["poster_path", "release_date", "vote_average", "genre_ids"]:
+                    if not m.get(field):
+                        m[field] = best.get(field)
 
-                # Only override fields that were missing
-                if not got_poster and best.get("poster_path"):
-                    m["poster_path"] = best["poster_path"]
-                if not got_details:
-                    m["release_date"]  = best.get("release_date", "")
-                    m["vote_average"]  = best.get("vote_average", 0)
-                    m["genre_ids"]     = best.get("genre_ids", [])
-
-        # ── Step 3: Build final result ───────────────────────────
-        poster = (
-            f"https://image.tmdb.org/t/p/w300{m['poster_path']}"
-            if m.get("poster_path") else None
-        )
-        year   = m.get("release_date", "N/A")[:4] or "N/A"
+        # Step 3: Build result
+        poster = f"https://image.tmdb.org/t/p/w300{m['poster_path']}" if m.get("poster_path") else None
+        year   = (m.get("release_date") or "N/A")[:4] or "N/A"
         rating = round(float(m.get("vote_average") or 0), 1)
 
-        # genres: movie detail endpoint returns list of dicts; search returns id list
-        if "genres" in m and isinstance(m["genres"], list) and m["genres"] and isinstance(m["genres"][0], dict):
+        if "genres" in m and isinstance(m.get("genres"), list) and m["genres"] and isinstance(m["genres"][0], dict):
             genre_ids = [g["id"] for g in m["genres"]]
         else:
             genre_ids = m.get("genre_ids", [])
 
         genres = ", ".join([GENRE_MAP.get(gid, "") for gid in genre_ids if gid in GENRE_MAP])
-
         return poster, year, genres, rating
 
     except Exception as e:
         print(f"❌ Error for movie_id={movie_id}, title='{title}': {str(e)}")
         return None, "N/A", "N/A", "N/A"
-
+    
 # Load titles
 #movies_df = pd.read_csv("data/movies.csv")
 movies_df = pd.read_csv("data/tmdb_5000_movies.csv")
@@ -317,12 +365,37 @@ if st.button("Get Recommendations"):
             st.error(results[0])
         else:
             with st.spinner("Fetching recommendations..."):
-                def fetch_with_delay(r):
-                    time.sleep(random.uniform(0.3, 0.8))
-                    return fetch_movie_details(r["movie_id"], TMDB_API_KEY, title=r["title"])
+                 movie_details = []
+                 for r in results:
+                     time.sleep(random.uniform(0.8, 1.2))
+                     movie_details.append(fetch_movie_details(r["movie_id"], TMDB_API_KEY, title=r["title"]))
+            
+                # def fetch_with_delay(r):
+                #     time.sleep(random.uniform(0.3, 0.8))
+                #     return fetch_movie_details(r["movie_id"], TMDB_API_KEY, title=r["title"])
+                # def fetch_with_delay(r):
+                #     for attempt in range(3):  # retry up to 3 times
+                #         try:
+                #          time.sleep(random.uniform(0.3, 0.8))
+                #          result = fetch_movie_details(r["movie_id"], TMDB_API_KEY, title=r["title"])
+                #          if result[0] is not None:  # got a poster
+                #              return result
+                #         except Exception:
+                #             time.sleep(1.5 * (attempt + 1))
+                #     return fetch_movie_details(r["movie_id"], TMDB_API_KEY, title=r["title"])
+                # def fetch_with_delay(r):
+                #     for attempt in range(3):
+                #         try:
+                #            time.sleep(random.uniform(0.5 * (attempt + 1), 1.0 * (attempt + 1)))
+                #            result = fetch_movie_details.clear()  # won't help in thread, skip
+                #            result = fetch_movie_details.__wrapped__(r["movie_id"], TMDB_API_KEY, title=r["title"])
+                #            return result
+                #         except Exception:
+                #            pass
+                #     return None, "N/A", "N/A", "N/A"
 
-                with ThreadPoolExecutor(max_workers=3) as executor:
-                    movie_details = list(executor.map(fetch_with_delay, results))
+                #  with ThreadPoolExecutor(max_workers=3) as executor:
+                #     movie_details = list(executor.map(fetch_with_delay, results))
 
             st.subheader("You might also like:")
             cols = st.columns(5)
@@ -334,11 +407,13 @@ if st.button("Get Recommendations"):
                         st.image(poster, width='stretch')
                     else:
                         st.image("https://placehold.co/200x300?text=No+Poster", width='stretch')
-                        st.warning("Poster not available")
+                        # st.warning("Poster not available")
                     st.markdown(f"**{movie['title']}**")
                     st.caption(f"⭐ {rating}/10  |  📅 {year}")
                     st.caption(f"🎭 {genres}")
                     st.caption(f"🎬 {movie['director']}")
                     st.caption(f"👥 {movie['cast']}")
                     st.caption(f"🏷️ {movie['keywords']}")
-        
+                    # ── V4 additions ──
+                    mode_icon = "🔀" if movie.get("mode") == "hybrid" else "📐"
+                    st.caption(f"{mode_icon} Match score: {movie.get('score', 'N/A')}")
