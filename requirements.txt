@@ -4,3 +4,4 @@ scikit-learn
 streamlit
 requests
 urllib3
+google-generativeai
